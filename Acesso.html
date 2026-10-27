@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controle de Acesso Facial</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --fundo: #0b0d14;
+    --painel: #12162a;
+    --linha: #ffffff1f;
+    --texto: #eef1ff;
+    --fraco: #9aa3c7;
+    --amarelo: #ffd23f;
+    --verde: #2ee6a8;
+    --vermelho: #ff5470;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--fundo); font-family: system-ui, sans-serif; color: var(--texto); overflow: hidden; }
+  [hidden] { display: none !important; }
+
+  /* ---------- palco (vídeo + canvas) ---------- */
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  video { opacity: .5; }
+
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; gap: 8px; padding: 14px 18px; font-size: clamp(13px, 2.2vw, 20px); font-weight: 800; text-shadow: 0 2px 8px #000a; pointer-events: none; z-index: 5; }
+  #hud span { background: #0b0d14aa; border: 1px solid var(--linha); border-radius: 999px; padding: 4px 14px; white-space: nowrap; }
+
+  #status { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; font-weight: 600; text-shadow: 0 2px 6px #000; padding: 0 16px; z-index: 5; pointer-events: none; }
+
+  #overlay { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: #0b0d14d9; text-align: center; padding: 24px; }
+  #overlay h1 { margin: 0; font-size: clamp(30px, 6vw, 60px); }
+  #overlay p { margin: 0; max-width: 520px; color: var(--fraco); }
+
+  /* ---------- banner de acesso ---------- */
+  #banner { position: absolute; z-index: 40; left: 50%; top: 64px; transform: translateX(-50%) scale(.9); transform-origin: top center; opacity: 0; transition: opacity .18s, transform .18s; text-align: center; pointer-events: none; width: min(92vw, 760px); }
+  #banner.on { opacity: 1; transform: translateX(-50%) scale(1); }
+  #banner .txt { display: block; font-weight: 900; letter-spacing: .04em; font-size: clamp(28px, 6vw, 64px); line-height: 1.05; padding: .18em .5em; border-radius: 18px; }
+  #banner .sub { display: block; margin-top: 10px; font-weight: 700; font-size: clamp(13px, 2.4vw, 22px); color: #fff; text-shadow: 0 2px 10px #000c; }
+  #banner.ok .txt { background: #0c3a2acc; color: var(--verde); border: 3px solid var(--verde); box-shadow: 0 0 60px #2ee6a855; }
+  #banner.no .txt { background: #3a0c18cc; color: var(--vermelho); border: 3px solid var(--vermelho); box-shadow: 0 0 60px #ff547055; }
+
+  /* ---------- painel lateral ---------- */
+  #painel { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; width: min(360px, 92vw); background: #0e1220e6; backdrop-filter: blur(10px); border-left: 1px solid var(--linha); display: flex; flex-direction: column; gap: 0; overflow-y: auto; }
+  #painel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--linha); position: sticky; top: 0; background: #0e1220f2; }
+  #painel h2 { margin: 0; font-size: 16px; letter-spacing: .02em; }
+  #painel section { padding: 14px 16px; border-bottom: 1px solid var(--linha); display: flex; flex-direction: column; gap: 10px; }
+  #painel footer { padding: 12px 16px 24px; }
+  #painel h3 { margin: 0; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--amarelo); }
+  #painel .mini { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--fraco); }
+  .linha { display: flex; gap: 8px; flex-wrap: wrap; }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--fraco); }
+
+  input[type=text] { font: inherit; color: var(--texto); background: #0b0d14; border: 1px solid var(--linha); border-radius: 10px; padding: 9px 12px; }
+  input[type=range] { width: 100%; accent-color: var(--amarelo); }
+  output { color: var(--texto); font-weight: 800; }
+
+  button { font: inherit; font-weight: 700; font-size: 15px; padding: 11px 16px; border: 0; border-radius: 12px; background: var(--amarelo); color: #222; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.secundario { background: #1c2340; color: var(--texto); border: 1px solid var(--linha); font-size: 13.5px; padding: 9px 12px; flex: 1 1 auto; }
+  button.perigo { background: #3a0c18; color: #ffc3cd; border: 1px solid #ff547055; }
+  button.largo { width: 100%; }
+  button.gravando { background: var(--vermelho); color: #fff; }
+
+  .barra { height: 8px; border-radius: 999px; background: #ffffff14; overflow: hidden; }
+  .barra i { display: block; height: 100%; width: 0; background: var(--amarelo); transition: width .15s linear; }
+
+  .previa { display: flex; gap: 10px; align-items: center; }
+  .previa img { width: 64px; height: 64px; object-fit: cover; border-radius: 12px; border: 1px solid var(--linha); image-rendering: pixelated; }
+  #vetor { flex: 1 1 auto; width: auto; height: 56px; border: 0; min-width: 0; }
+
+  #estado { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; letter-spacing: .04em; padding: 9px 12px; border-radius: 12px; background: #0b0d14; border: 1px solid var(--linha); }
+  #estado::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--fraco); }
+  #estado.ok { color: var(--verde); } #estado.ok::before { background: var(--verde); }
+  #estado.no { color: var(--vermelho); } #estado.no::before { background: var(--vermelho); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <div id="hud">
+    <span>Rostos: <span id="count">0</span></span>
+    <span id="fps">-- fps</span>
+    <span>Similaridade: <span id="sim">--</span></span>
+  </div>
+
+  <div id="banner" hidden><span class="txt"></span><span class="sub"></span></div>
+  <div id="status"></div>
+
+  <div id="overlay">
+    <h1>Controle de Acesso Facial</h1>
+    <p id="msg">A câmera só é usada aqui no navegador: nenhuma imagem é enviada para a internet. Primeiro você grava o seu rosto, depois o sistema decide se libera ou nega o acesso.</p>
+    <button id="btn">Ativar câmera</button>
+  </div>
+
+  <aside id="painel">
+    <header>
+      <h2>Reconhecimento facial</h2>
+      <button id="btnOcultar" class="secundario" style="flex:0 0 auto">Ocultar</button>
+    </header>
+
+    <section>
+      <h3>1 · Gravar meu rosto</h3>
+      <label>Seu nome
+        <input type="text" id="nome" value="Glen" maxlength="24" autocomplete="off">
+      </label>
+      <button id="btnGravar" class="largo" disabled>Gravar meu rosto</button>
+      <div class="barra"><i id="prog"></i></div>
+      <p class="mini" id="msgGravar">Nenhuma gravação ainda. Ative a câmera e clique em “Gravar meu rosto”.</p>
+      <div class="previa" id="previa" hidden>
+        <img id="previaImg" alt="prévia do rosto gravado">
+        <canvas id="vetor" width="240" height="56"></canvas>
+      </div>
+      <button id="btnSalvar" class="largo" disabled>Salvar características em JSON</button>
+      <p class="mini" id="msgSalvar">O JSON guarda o vetor de 128 números que descreve o seu rosto.</p>
+      <div class="linha">
+        <button id="btnVincular" class="secundario">Vincular arquivo…</button>
+        <button id="btnBaixar" class="secundario">Baixar JSON</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>2 · Acesso</h3>
+      <div id="estado">aguardando</div>
+      <label>Limiar — distância máxima para liberar
+        <input type="range" id="limiar" min="0.28" max="0.80" step="0.01" value="0.45">
+        <span><output id="limiarOut">0.45</output> · menor = mais rigoroso</span>
+      </label>
+      <div class="linha">
+        <button id="btnImportar" class="secundario">Carregar JSON</button>
+        <button id="btnLimpar" class="secundario perigo">Apagar</button>
+      </div>
+      <input type="file" id="arquivo" accept="application/json,.json" hidden>
+    </section>
+
+    <footer>
+      <p class="mini" id="origem">Origem do perfil: —</p>
+      <p class="mini">Para gravar o JSON direto nesta pasta, rode <code>node server.js</code> e abra <code>http://localhost:8080/index2.html</code>.</p>
+    </footer>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js" crossorigin="anonymous"></script>
+<script>
+'use strict';
+/* =========================================================================
+   Controle de acesso facial
+   -------------------------------------------------------------------------
+   MediaPipe  -> detecta onde está o rosto (caixa e pontos-chave)
+   face-api.js -> transforma o rosto em um vetor de 128 números ("embedding")
+                  usando a FaceRecognitionNet. É esse vetor que diz QUEM é a
+                  pessoa: a distância entre o vetor da câmera e o vetor salvo
+                  no JSON decide entre ACESSO LIBERADO e ACESSO NEGADO.
+   ========================================================================= */
+
+const MP_VERSION   = '0.4.1646425229';
+const FACEAPI_URL  = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15';
+const WASM_URL     = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/';
+const FALLBACK_W = 640, FALLBACK_H = 480;
+
+const CHAVE_LS   = 'ics:perfil-rosto:v1';
+const CHAVE_IDB  = 'arquivo-json';
+const ARQUIVO    = 'perfil-rosto.json';
+const DIM        = 128;          // tamanho do embedding do face-api.js
+const AMOSTRAS   = 20;           // amostras coletadas na gravação
+const INTERVALO_MS = 220;        // intervalo entre amostras
+const CONFIRMACAO  = 3;          // frames seguidos antes de trocar o estado
+const INTERVALO_RECONHECER = 150; // ms entre comparações (controle de CPU)
+
+const $ = id => document.getElementById(id);
+const video = $('video'), canvas = $('canvas'), ctx = canvas.getContext('2d');
+const overlay = $('overlay'), btn = $('btn'), statusEl = $('status');
+const countEl = $('count'), fpsEl = $('fps'), simEl = $('sim');
+const banner = $('banner'), bannerTxt = banner.querySelector('.txt'), bannerSub = banner.querySelector('.sub');
+const painel = $('painel');
+const nomeEl = $('nome'), btnGravar = $('btnGravar'), progEl = $('prog');
+const msgGravar = $('msgGravar'), previa = $('previa'), previaImg = $('previaImg');
+const vetorCanvas = $('vetor'), vetorCtx = vetorCanvas.getContext('2d');
+const btnSalvar = $('btnSalvar'), msgSalvar = $('msgSalvar'), btnVincular = $('btnVincular'), btnBaixar = $('btnBaixar');
+const estadoEl = $('estado'), limiarEl = $('limiar'), limiarOut = $('limiarOut');
+const btnImportar = $('btnImportar'), btnLimpar = $('btnLimpar'), arquivoEl = $('arquivo'), origemEl = $('origem');
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// Mensagem temporária no rodapé: fica visível por `ms` e o laço de desenho
+// não pode sobrescrevê-la enquanto ela estiver de pé.
+function avisar(texto, ms = 5000) {
+  statusEl.textContent = texto;
+  msgAte = performance.now() + ms;
+}
+function limparAviso() {
+  statusEl.textContent = '';
+  msgAte = 0;
+}
+
+/* ------------------------------------------------------------------ estado */
+let faces = [];                       // rostos do MediaPipe, em pixels do canvas
+let mpFace = null, mpOcupado = false, pronto = false;
+let modelosProntos = false, faOcupado = false;
+let perfil = null;                    // o JSON do dono do rosto
+let arquivoVinculado = null;          // FileSystemFileHandle (opcional)
+let servidorLocal = null;             // true | false | null (ainda não testado)
+let ultimaFaceApi = null;             // última detecção do face-api (desenho + rótulo)
+let gravando = false, amostras = [], inicioGravacao = 0;
+let estado = 'sem-perfil', decisao = 'sem-perfil', consecutive = 0;
+let ultimoRostoEm = 0, ultimoReconhecer = 0, ultimaDistancia = 0, msgAte = 0;
+
+/* ================================================================ câmera */
+function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+const vw = () => video.videoWidth || FALLBACK_W;
+const vh = () => video.videoHeight || FALLBACK_H;
+const coverScale = () => Math.max(canvas.width / vw(), canvas.height / vh());
+
+// O vídeo e o canvas usam object-fit: cover, então a escala é a maior das duas razões.
+function toScreen(px, py) {
+  const s = coverScale();
+  return { x: px * s + (canvas.width - vw() * s) / 2, y: py * s + (canvas.height - vh() * s) / 2 };
+}
+
+async function init() {
+  btn.disabled = true; btn.textContent = 'Abrindo câmera…';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: FALLBACK_W }, height: { ideal: FALLBACK_H }, frameRate: { ideal: 30 }, facingMode: 'user' },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+  } catch (e) {
+    $('msg').textContent = 'Não consegui acessar a câmera. Permita o acesso e abra via http://localhost ou https.';
+    btn.disabled = false; btn.textContent = 'Tentar de novo';
+    return;
+  }
+  pronto = true;
+  overlay.hidden = true;
+  await Promise.all([setupMediaPipe(), setupFaceApi()]);
+  detectLoop();
+  btnGravar.disabled = !modelosProntos;
+}
+btn.onclick = init;
+
+/* ==================================================== MediaPipe (detecção) */
+function setupMediaPipe() {
+  if (typeof FaceDetection === 'undefined') {
+    avisar('⚠ MediaPipe não carregou (verifique a internet)');
+    return Promise.resolve();
+  }
+  mpFace = new FaceDetection({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@${MP_VERSION}/${f}` });
+  // 'short' é o modelo rápido, feito para um rosto de perto. ('full' aborta o WASM
+  // na versão 0.4.1646425229 — foi testado e não roda.)
+  mpFace.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+  mpFace.onResults(res => {
+    // boundingBox e landmarks chegam NORMALIZADOS (0..1) em relação à imagem do vídeo.
+    // A caixa vem no formato { xCenter, yCenter, width, height }.
+    const s = coverScale();
+    faces = (res.detections || []).map(d => {
+      const b = d.boundingBox || {};
+      const bw = b.width ?? 0, bh = b.height ?? 0;
+      const topLeft = toScreen((b.xCenter - bw / 2) * vw(), (b.yCenter - bh / 2) * vh());
+      return {
+        x: topLeft.x, y: topLeft.y,
+        w: bw * vw() * s, h: bh * vh() * s,
+        points: (d.landmarks || []).map(l => toScreen(l.x * vw(), l.y * vh()))
+      };
+    });
+    countEl.textContent = faces.length;
+  });
+  avisar('Carregando modelo de detecção…');
+  return Promise.resolve();
+}
+
+/* ============================================= face-api.js (embedding 128-d) */
+async function setupFaceApi() {
+  if (typeof faceapi === 'undefined') {
+    avisar('⚠ face-api.js não carregou (verifique a internet)');
+    return;
+  }
+  // Escolhe o backend na mão: WebGL se a GPU permitir, senão CPU. (O backend
+  // wasm padrão tenta baixar um .wasm que não existe no CDN e só gera erro.)
+  try {
+    const tentar = async nome => { try { return await faceapi.tf.setBackend(nome); } catch (e) { return false; } };
+    let ok = await tentar('webgl');
+    if (!ok && faceapi.tf.wasm && faceapi.tf.wasm.setWasmPaths) {
+      faceapi.tf.wasm.setWasmPaths(WASM_URL);
+      ok = await tentar('wasm');
+    }
+    if (!ok) await faceapi.tf.setBackend('cpu');
+    await faceapi.tf.ready();
+    console.log('face-api backend:', faceapi.tf.getBackend());
+  } catch (e) {
+    avisar('⚠ Nenhum backend disponível para o face-api: ' + e.message);
+    return;
+  }
+  avisar('Baixando modelos de reconhecimento (~10 MB, só na 1ª vez)…');
+  try {
+    const origem = FACEAPI_URL + '/model';
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(origem),
+      faceapi.nets.faceLandmark68Net.loadFromUri(origem),
+      faceapi.nets.faceRecognitionNet.loadFromUri(origem)
+    ]);
+    modelosProntos = true;
+    btnGravar.disabled = false;
+    limparAviso();
+  } catch (e) {
+    avisar('⚠ Erro ao baixar os modelos: ' + e.message);
+  }
+}
+
+const OPCOES_DET = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+
+// Roda detecção + 68 pontos + embedding em todos os rostos do frame.
+// devolve [{ box, score, descriptor }] com box em pixels do VÍDEO.
+async function descreverRostos() {
+  const r = await faceapi.detectAllFaces(video, OPCOES_DET()).withFaceLandmarks().withFaceDescriptors();
+  return r.map(d => ({
+    box: d.detection.box,
+    score: d.detection.score,
+    descriptor: Array.from(d.descriptor)
+  }));
+}
+
+/* ================================================= matemática do embedding */
+function distancia(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; }
+  return Math.sqrt(s);
+}
+function mediaVetores(lista) {
+  const n = lista[0].length, out = new Array(n).fill(0);
+  for (const v of lista) for (let i = 0; i < n; i++) out[i] += v[i] / lista.length;
+  return out;
+}
+const arred = v => Math.round(v * 1000) / 1000;
+
+// Dispersão interna: distância média entre as amostras gravadas.
+// Serve para calibrar o limiar automaticamente.
+function dispersao(lista) {
+  if (lista.length < 2) return 0;
+  let s = 0, n = 0;
+  for (let i = 0; i < lista.length; i++)
+    for (let j = i + 1; j < lista.length; j++) { s += distancia(lista[i], lista[j]); n++; }
+  return s / n;
+}
+
+/* ============================================ gravação do meu rosto (JSON) */
+function capturaPrevia(box) {
+  const c = document.createElement('canvas');
+  c.width = 96; c.height = 96;
+  const g = c.getContext('2d');
+  const lado = Math.min(box.width, box.height) * 1.35;           // um pouco de margem
+  g.drawImage(video, box.x + (box.width - lado) / 2, box.y + (box.height - lado) / 2, lado, lado, 0, 0, 96, 96);
+  return c.toDataURL('image/jpeg', 0.7);
+}
+
+// Desenha o vetor de 128 números como um mini gráfico de barras.
+function desenharVetor(v) {
+  const w = vetorCanvas.width, h = vetorCanvas.height;
+  vetorCtx.clearRect(0, 0, w, h);
+  const max = Math.max(...v.map(Math.abs)) || 1;
+  const bw = w / v.length;
+  for (let i = 0; i < v.length; i++) {
+    const bh = Math.max(1, Math.abs(v[i]) / max * (h - 4));
+    vetorCtx.fillStyle = v[i] >= 0 ? '#ffd23f' : '#7aa2ff';
+    vetorCtx.fillRect(i * bw, (h - bh) / 2, Math.max(1, bw - 1), bh);
+  }
+}
+
+btnGravar.onclick = () => {
+  if (gravando) { pararGravacao(true); return; }
+  if (!pronto || !modelosProntos) { avisar('⚠ Ative a câmera e aguarde os modelos carregarem'); return; }
+  gravando = true; amostras = []; inicioGravacao = performance.now();
+  btnGravar.textContent = 'Cancelar gravação';
+  btnGravar.classList.add('gravando');
+  progEl.style.width = '0%';
+  msgGravar.textContent = 'Centralize o rosto e olhe para a câmera…';
+  limparAviso();
+  setTimeout(amostrar, 400);
+};
+
+async function amostrar() {
+  if (!gravando) return;
+  const agora = performance.now();
+  try {
+    if (!faOcupado) {
+      faOcupado = true;
+      const r = await descreverRostos();
+      if (gravando) {
+        if (r.length) {
+          const melhor = r.reduce((a, b) => b.score > a.score ? b : a);
+          amostras.push({ t: Math.round(agora - inicioGravacao), d: melhor.descriptor, confianca: arred(melhor.score) });
+          progEl.style.width = (amostras.length / AMOSTRAS * 100) + '%';
+          msgGravar.textContent = `Amostra ${amostras.length}/${AMOSTRAS} — continue olhando para a câmera`;
+          previaImg.src = capturaPrevia(melhor.box);
+          previa.hidden = false;
+          if (amostras.length >= AMOSTRAS) { pararGravacao(false); return; }
+        } else {
+          msgGravar.textContent = 'Nenhum rosto encontrado — enquadre o seu rosto na câmera';
+        }
+      }
+    }
+  } catch (e) {
+    msgGravar.textContent = '⚠ Erro ao capturar: ' + e.message;
+  } finally {
+    faOcupado = false;
+  }
+  if (gravando) setTimeout(amostrar, INTERVALO_MS);
+}
+
+function pararGravacao(cancelado) {
+  gravando = false;
+  btnGravar.textContent = 'Gravar meu rosto';
+  btnGravar.classList.remove('gravando');
+  if (cancelado || amostras.length < 3) {
+    amostras = [];
+    progEl.style.width = '0%';
+    msgGravar.textContent = 'Gravação cancelada. Tente de novo quando estiver pronto.';
+    return;
+  }
+  const template = mediaVetores(amostras.map(a => a.d));
+  const spread = dispersao(amostras.map(a => a.d));
+  // Limiar automático: folga sobre a própria dispersão, com limites seguros.
+  const limiar = clamp(spread * 2.2 + 0.18, 0.35, 0.65);
+  const agora = new Date().toISOString();
+
+  perfil = {
+    schema: 'ics:perfil-facial@1',
+    nome: nomeEl.value.trim() || 'Eu',
+    criado_em: agora,
+    atualizado_em: agora,
+    motor: {
+      biblioteca: 'face-api.js (@vladmandic/face-api 1.7.15)',
+      rede: 'FaceRecognitionNet',
+      detector: 'TinyFaceDetector',
+      dimensao: DIM,
+      metrica: 'distancia_euclidiana'
+    },
+    limiar: arred(limiar),
+    dispersao_interna: arred(spread),
+    // o "embedding" do dono: média dos 20 vetores
+    embedding: template.map(arred),
+    // as amostras cruas ficam guardadas para recalcular ou auditar
+    amostras: amostras.map(a => ({ t_ms: a.t, confianca: a.confianca, embedding: a.d.map(arred) })),
+    previa: previaImg.src || null
+  };
+
+  desenharVetor(template);
+  limiarEl.value = perfil.limiar;
+  limiarOut.textContent = perfil.limiar.toFixed(2);
+  btnSalvar.disabled = false;
+  msgGravar.textContent = `${amostras.length} amostras gravadas. Dispersão ${perfil.dispersao_interna} · limiar ${perfil.limiar}. Agora clique em “Salvar”.`;
+  avisar('Rosto gravado — clique em “Salvar características em JSON”');
+  salvar();
+}
+
+/* ============================================ reconhecimento (quem é?) */
+function descreverRostoNoFrame() {
+  if (!modelosProntos || !pronto || faOcupado) return;
+  if (video.readyState < 2) return;
+  const agora = performance.now();
+  if (agora - ultimoReconhecer < INTERVALO_RECONHECER) return;
+  ultimoReconhecer = agora;
+
+  faOcupado = true;
+  descreverRostos()
+    .then(r => { if (pronto) aplicarDeteccao(r, agora); })
+    .catch(e => { avisar('⚠ Erro no reconhecimento: ' + e.message); })
+    .finally(() => { faOcupado = false; });
+}
+
+function aplicarDeteccao(r, agora) {
+  ultimaFaceApi = r;
+  countEl.textContent = r.length;
+
+  if (!r.length) {
+    simEl.textContent = '--';
+    if (agora - ultimoRostoEm > 1200) definirEstado('aguardando');
+    return;
+  }
+  ultimoRostoEm = agora;
+  if (!perfil) { definirEstado('sem-perfil'); return; }
+
+  // Decide olhando para TODOS os rostos do quadro: se qualquer um for o dono,
+  // o acesso é liberado mesmo que outra pessoa esteja junto.
+  let liberado = false, menor = Infinity;
+  for (const rosto of r) {
+    const d = distancia(rosto.descriptor, perfil.embedding);
+    rosto.distancia = d;
+    rosto.reconhecido = d <= perfil.limiar;
+    if (d < menor) menor = d;
+    liberado = liberado || rosto.reconhecido;
+  }
+  ultimaDistancia = menor;
+  simEl.textContent = (100 - clamp(menor / 0.8, 0, 1) * 100).toFixed(0) + '%';
+
+  // Exige CONFIRMACAO leituras iguais seguidas para trocar o estado (evita
+  // piscar entre liberado e negado por causa de um frame ruim).
+  if (liberado === decisao) consecutive++;
+  else { decisao = liberado; consecutive = 1; }
+
+  if (consecutive >= CONFIRMACAO) definirEstado(liberado ? 'liberado' : 'negado');
+  else if (estado === 'aguardando' || estado === 'sem-perfil') definirEstado(liberado ? 'liberado' : 'negado', true);
+}
+
+function definirEstado(novo, provisorio) {
+  if (!provisorio && novo === estado) return;
+  estado = novo;
+  const nomes = {
+    'sem-perfil': 'sem perfil salvo',
+    'aguardando': 'aguardando rosto',
+    'liberado': 'acesso liberado',
+    'negado': 'acesso negado'
+  };
+  estadoEl.textContent = provisorio && novo !== 'sem-perfil' ? nomes[novo] + '…' : nomes[novo];
+  estadoEl.className = novo === 'liberado' ? 'ok' : novo === 'negado' ? 'no' : '';
+
+  if (novo === 'liberado' || novo === 'negado') {
+    banner.className = novo === 'liberado' ? 'on ok' : 'on no';
+    bannerTxt.textContent = novo === 'liberado' ? 'ACESSO LIBERADO' : 'ACESSO NEGADO';
+    bannerSub.textContent = novo === 'liberado'
+      ? perfil.nome + ' · distância ' + ultimaDistancia.toFixed(3)
+      : 'rosto não cadastrado';
+    banner.hidden = false;
+  } else {
+    banner.className = ''; banner.hidden = true;
+  }
+}
+
+/* ============================================================ persistência */
+function perfilJSON() { return JSON.stringify(perfil, null, 2); }
+
+function aplicarPerfil(dados, origem) {
+  if (!dados || !Array.isArray(dados.embedding) || dados.embedding.length !== DIM) {
+    avisar('⚠ JSON inválido: faltou o vetor de ' + DIM + ' números');
+    return false;
+  }
+  perfil = dados;
+  nomeEl.value = dados.nome || nomeEl.value;
+  limiarEl.value = dados.limiar ?? 0.45;
+  limiarOut.textContent = Number(limiarEl.value).toFixed(2);
+  if (dados.previa) { previaImg.src = dados.previa; previa.hidden = false; }
+  desenharVetor(dados.embedding);
+  btnSalvar.disabled = false;
+  origemEl.textContent = 'Origem do perfil: ' + origem;
+  definirEstado(perfil ? 'aguardando' : 'sem-perfil');
+  return true;
+}
+
+// Ordem: (1) servidor local -> grava direto na pasta do index2
+//        (2) arquivo vinculado pelo usuário (File System Access API)
+//        (3) download manual
+// localStorage é sempre atualizado, para o perfil voltar sozinho no próximo load.
+async function salvar() {
+  if (!perfil) return;
+  const texto = perfilJSON();
+  localStorage.setItem(CHAVE_LS, texto);
+
+  if (servidorLocal === null) servidorLocal = await temServidor();
+  if (servidorLocal) {
+    try {
+      const r = await fetch('api/rosto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: texto });
+      if (r.ok) {
+        origemEl.textContent = 'Origem do perfil: servidor local (' + ARQUIVO + ')';
+        msgSalvar.textContent = 'Salvo automaticamente em ' + ARQUIVO + ', na pasta desta página.';
+        avisar('✔ ' + ARQUIVO + ' gravado na pasta do index2.html');
+        return;
+      }
+    } catch (e) { /* cai para o próximo método */ }
+  }
+
+  if (arquivoVinculado) {
+    if (await gravarNoArquivoVinculado()) {
+      origemEl.textContent = 'Origem do perfil: arquivo vinculado';
+      msgSalvar.textContent = 'Salvo em ' + arquivoVinculado.name + ' (grava sozinho nos próximos cliques).';
+      return;
+    }
+  }
+
+  localStorage.setItem(CHAVE_LS, texto);
+  origemEl.textContent = 'Origem do perfil: navegador (localStorage) — use “Baixar JSON”';
+  msgSalvar.textContent = 'Guardado no navegador. Clique em “Vincular arquivo…” para gravar direto na pasta, ou em “Baixar JSON”.';
+}
+
+async function temServidor() {
+  if (location.protocol === 'file:') return false;
+  try {
+    const r = await fetch('api/rosto', { cache: 'no-store' });
+    return r.ok;
+  } catch (e) { return false; }
+}
+
+async function gravarNoArquivoVinculado() {
+  try {
+    if (await arquivoVinculado.queryPermission({ mode: 'readwrite' }) !== 'granted' &&
+        await arquivoVinculado.requestPermission({ mode: 'readwrite' }) !== 'granted') return false;
+    const w = await arquivoVinculado.createWritable();
+    await w.write(perfilJSON());
+    await w.close();
+    return true;
+  } catch (e) { return false; }
+}
+
+btnSalvar.onclick = salvar;
+
+btnVincular.onclick = async () => {
+  if (!perfil) { avisar('⚠ Grave o seu rosto primeiro'); return; }
+  if (typeof window.showSaveFilePicker !== 'function') {
+    avisar('⚠ Seu navegador não permite vincular arquivo. Use “Baixar JSON”.');
+    return;
+  }
+  try {
+    arquivoVinculado = await window.showSaveFilePicker({ suggestedName: ARQUIVO, types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }] });
+    await idbSet(CHAVE_IDB, arquivoVinculado);
+    await salvar();
+  } catch (e) { if (e.name !== 'AbortError') avisar('⚠ ' + e.message); }
+};
+
+btnBaixar.onclick = () => {
+  if (!perfil) { avisar('⚠ Grave o seu rosto primeiro'); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([perfilJSON()], { type: 'application/json' }));
+  a.download = ARQUIVO;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+btnImportar.onclick = () => arquivoEl.click();
+arquivoEl.onchange = async () => {
+  const f = arquivoEl.files[0];
+  if (!f) return;
+  try { aplicarPerfil(JSON.parse(await f.text()), 'arquivo ' + f.name); avisar('✔ Perfil carregado de ' + f.name); }
+  catch (e) { avisar('⚠ Não consegui ler o JSON: ' + e.message); }
+  arquivoEl.value = '';
+};
+
+btnLimpar.onclick = () => {
+  if (!perfil) return;
+  perfil = null; amostras = []; ultimaFaceApi = null;
+  localStorage.removeItem(CHAVE_LS);
+  previa.hidden = true; progEl.style.width = '0%';
+  btnSalvar.disabled = true;
+  msgGravar.textContent = 'Registro apagado. Grave o seu rosto de novo para recriar.';
+  msgSalvar.textContent = ''; origemEl.textContent = 'Origem do perfil: —';
+  simEl.textContent = '--';
+  definirEstado('sem-perfil');
+  if (servidorLocal) fetch('api/rosto', { method: 'DELETE' }).catch(() => {});
+};
+
+// Arrastar o cursor gera dezenas de eventos: só grava o arquivo quando parar.
+let travaSalvar = null;
+limiarEl.oninput = () => {
+  limiarOut.textContent = Number(limiarEl.value).toFixed(2);
+  if (!perfil) return;
+  perfil.limiar = Number(limiarEl.value);
+  perfil.atualizado_em = new Date().toISOString();
+  clearTimeout(travaSalvar);
+  travaSalvar = setTimeout(salvar, 400);   // acompanha a mudança no arquivo
+};
+
+nomeEl.oninput = () => { if (perfil) perfil.nome = nomeEl.value.trim() || 'Eu'; };
+
+$('btnOcultar').onclick = () => {
+  painel.style.transform = 'translateX(100%)';
+  painel.style.transition = 'transform .2s';
+  setTimeout(() => {
+    const b = document.createElement('button');
+    b.textContent = 'Painel'; b.className = 'secundario';
+    b.style.cssText = 'position:absolute;z-index:30;top:14px;right:14px';
+    b.onclick = () => { b.remove(); painel.style.transform = ''; };
+    document.getElementById('stage').appendChild(b);
+  }, 200);
+};
+
+/* ================================================================ desenho */
+function loop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // só escreve o texto de espera quando não há nenhum aviso temporário de pé
+  if (pronto && !gravando && estado === 'aguardando' && performance.now() > msgAte) {
+    statusEl.textContent = faces.length ? 'Olhe para a câmera' : 'Nenhum rosto detectado — enquadre-se na câmera';
+  }
+
+  // pontos-chave do MediaPipe (fios e pontos) — só a malha, sem caixa
+  ctx.fillStyle = '#ffffffcc';
+  for (const f of faces) for (const p of f.points) { ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill(); }
+
+  // caixa + nome do face-api.js: aqui é que sabemos de QUEM é o rosto
+  for (const r of (ultimaFaceApi || [])) {
+    const tl = toScreen(r.box.x, r.box.y);
+    const w = r.box.width * coverScale(), h = r.box.height * coverScale();
+    const ok = !!r.reconhecido;
+    const cor = !perfil ? '#9aa3c7' : ok ? '#2ee6a8' : '#ff5470';
+
+    ctx.strokeStyle = cor; ctx.lineWidth = 3;
+    ctx.strokeRect(tl.x, tl.y, w, h);
+    ctx.fillStyle = cor + '33';
+    ctx.fillRect(tl.x, tl.y, w, h);
+
+    const d = perfil ? distancia(r.descriptor, perfil.embedding) : null;
+    const rotulo = !perfil ? 'DESCONHECIDO'
+      : ok ? perfil.nome.toUpperCase() : 'DESCONHECIDO';
+    const detalhe = d === null ? 'sem perfil' : 'dist ' + d.toFixed(3);
+
+    // O canvas é espelhado por CSS (efeito selfie); desespelha só o texto,
+    // ancorado no canto que VISUALMENTE é o esquerdo da caixa.
+    ctx.save();
+    ctx.translate(tl.x + w, 0);
+    ctx.scale(-1, 1);
+    ctx.font = '800 15px system-ui, sans-serif';
+    ctx.textBaseline = 'bottom';
+    const largura = Math.max(ctx.measureText(rotulo).width, ctx.measureText(detalhe).width) + 20;
+    ctx.fillStyle = '#0b0d14dd';
+    ctx.fillRect(0, tl.y - 42, largura, 40);
+    ctx.fillStyle = cor;
+    ctx.fillText(rotulo, 10, tl.y - 18);
+    ctx.fillStyle = '#eef1ff';
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.fillText(detalhe, 10, tl.y - 4);
+    ctx.restore();
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ======================================================= laço de detecção */
+let frames = 0, fpsSince = performance.now();
+async function detectLoop() {
+  if (mpFace && !mpOcupado && video.readyState >= 2) {
+    mpOcupado = true;
+    try { await mpFace.send({ image: video }); }
+    catch (e) { avisar('⚠ Erro na detecção: ' + e.message); }
+    mpOcupado = false;
+
+    frames++;
+    const agora = performance.now();
+    if (agora - fpsSince >= 500) {
+      fpsEl.textContent = Math.round(frames * 1000 / (agora - fpsSince)) + ' fps';
+      frames = 0; fpsSince = agora;
+    }
+  }
+  descreverRostoNoFrame();
+  requestAnimationFrame(detectLoop);
+}
+
+/* =============================================== IndexedDB (guardar handle) */
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('ics-rosto', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('chaves');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbSet(k, v) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const t = db.transaction('chaves', 'readwrite');
+    t.objectStore('chaves').put(v, k);
+    t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+  });
+}
+async function idbGet(k) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const t = db.transaction('chaves', 'readonly');
+    const q = t.objectStore('chaves').get(k);
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+}
+
+/* ==================================================== carregamento inicial */
+(async function iniciar() {
+  if (location.protocol === 'file:') {
+    avisar('⚠ Abra via http://localhost (ex.: node server.js) — a câmera não funciona com file://');
+  }
+  if (typeof window.showSaveFilePicker === 'function') {
+    try { arquivoVinculado = await idbGet(CHAVE_IDB); } catch (e) { /* IndexedDB bloqueou: sem arquivo vinculado */ }
+  }
+
+  servidorLocal = await temServidor();
+
+  // 1) arquivo do servidor local (grava e lê direto na pasta)
+  if (servidorLocal) {
+    try {
+      const r = await fetch('api/rosto', { cache: 'no-store' });
+      const d = await r.json();
+      if (d && d.embedding) {
+        if (aplicarPerfil(d, 'servidor local (' + ARQUIVO + ')')) return;
+      }
+    } catch (e) { /* sem arquivo ainda */ }
+  }
+
+  // 2) navegador
+  const salvo = localStorage.getItem(CHAVE_LS);
+  if (salvo) {
+    try { if (aplicarPerfil(JSON.parse(salvo), 'navegador (localStorage)')) return; }
+    catch (e) { localStorage.removeItem(CHAVE_LS); }
+  }
+
+  definirEstado('sem-perfil');
+  origemEl.textContent = servidorLocal
+    ? 'Origem do perfil: nenhum ' + ARQUIVO + ' em ' + location.pathname
+    : 'Origem do perfil: nenhum (rode node server.js para gravar nesta pasta)';
+})();
+</script>
+</body>
+</html>
